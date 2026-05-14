@@ -1,0 +1,9 @@
+.env
+.venv/
+chat_logs/
+bot.log
+*.png
+*.jpg
+*.pdf
+__pycache__/
+.claude/

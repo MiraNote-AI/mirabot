@@ -1,0 +1,12 @@
+app = "lumabot-discord"
+primary_region = "sjc"
+
+[build]
+
+[processes]
+  worker = "python -u bot.py"
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
