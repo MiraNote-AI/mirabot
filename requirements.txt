@@ -2,3 +2,4 @@ discord.py>=2.3
 openai>=1.0
 python-dotenv>=1.0
 aiohttp>=3.9
+playwright>=1.40

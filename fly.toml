@@ -1,4 +1,4 @@
-app = "lumabot-discord"
+app = "mirabot-discord"
 primary_region = "sjc"
 
 [build]

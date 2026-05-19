@@ -1,12 +1,12 @@
 """
-LumaBot — Discord AI Bot
+MiraBot — Discord AI Bot
 Features:
 - /ask <question> — Ask AI with channel context
 - /summarize [count] — Summarize recent messages
 - /notes — Extract key decisions and TODOs
 - /export [count] — Export chat history to local file
-- Auto-sync: periodically saves all channel logs to LumaLab/chat_logs/
-- Responds to @mentions, replies to bot messages, and "lumabot" keyword
+- Auto-sync: periodically saves all channel logs to chat_logs/
+- Responds to @mentions, replies to bot messages, and "mirabot" keyword
 - Fetches URL content (including JS-rendered pages like Xiaohongshu)
 """
 
@@ -56,15 +56,16 @@ ai = OpenAI(api_key=AI_API_KEY, base_url=AI_API_BASE_URL)
 
 
 async def fetch_channel_history(channel, limit=50):
-    """Fetch recent messages from a channel."""
+    """Fetch recent messages from a channel (newest first, then reversed to chronological)."""
     messages = []
-    async for msg in channel.history(limit=limit, oldest_first=True):
+    async for msg in channel.history(limit=limit):
         messages.append({
             "author": msg.author.display_name,
             "content": msg.content,
             "timestamp": msg.created_at.isoformat(),
             "is_bot": msg.author.bot,
         })
+    messages.reverse()
     return messages
 
 
@@ -207,9 +208,9 @@ async def extract_url_context(text: str) -> str:
     return "\n\n".join(contents)
 
 
-def ask_ai(question: str, chat_history: str = "", system_override: str = "", url_context: str = "") -> str:
+async def ask_ai(question: str, chat_history: str = "", system_override: str = "", url_context: str = "") -> str:
     """Send a question to the AI backend with channel history as context."""
-    system_prompt = system_override or "You are LumaBot, a helpful AI assistant on Discord. Answer concisely."
+    system_prompt = system_override or "You are MiraBot, a helpful AI assistant on Discord. Answer concisely."
     if chat_history:
         system_prompt += (
             "\n\nBelow is the recent chat history from this Discord channel. "
@@ -222,7 +223,8 @@ def ask_ai(question: str, chat_history: str = "", system_override: str = "", url
             "This includes the full page content with comments if available. "
             "Use it to answer questions about those links.\n\n" + url_context
         )
-    resp = ai.chat.completions.create(
+    resp = await asyncio.to_thread(
+        ai.chat.completions.create,
         model="gemini-flash-latest",
         messages=[
             {"role": "system", "content": system_prompt},
@@ -259,15 +261,15 @@ guild_obj = discord.Object(id=int(DISCORD_GUILD_ID))
 
 
 # ===== /ask =====
-@tree.command(name="ask", description="Ask LumaBot a question (with channel context)", guild=guild_obj)
-@app_commands.describe(question="Your question for LumaBot")
+@tree.command(name="ask", description="Ask MiraBot a question (with channel context)", guild=guild_obj)
+@app_commands.describe(question="Your question for MiraBot")
 async def ask_command(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     try:
         msgs = await fetch_channel_history(interaction.channel)
         history = format_history_for_ai(msgs)
-        url_ctx = await extract_url_context(question + " " + history)
-        answer = ask_ai(question, history, url_context=url_ctx)
+        url_ctx = await extract_url_context(question)
+        answer = await ask_ai(question, history, url_context=url_ctx)
     except Exception as e:
         answer = f"Sorry, something went wrong: {e}"
     await interaction.followup.send(answer)
@@ -281,10 +283,10 @@ async def summarize_command(interaction: discord.Interaction, count: int = 50):
     try:
         msgs = await fetch_channel_history(interaction.channel, limit=count)
         history = format_history_for_ai(msgs)
-        answer = ask_ai(
+        answer = await ask_ai(
             f"Summarize the following {count} messages. Highlight key topics, decisions, and action items.",
             history,
-            system_override="You are LumaBot. Provide a clear, structured summary of Discord conversations. Use bullet points.",
+            system_override="You are MiraBot. Provide a clear, structured summary of Discord conversations. Use bullet points.",
         )
     except Exception as e:
         answer = f"Sorry, something went wrong: {e}"
@@ -299,14 +301,14 @@ async def notes_command(interaction: discord.Interaction, count: int = 100):
     try:
         msgs = await fetch_channel_history(interaction.channel, limit=count)
         history = format_history_for_ai(msgs)
-        answer = ask_ai(
+        answer = await ask_ai(
             "Extract from this conversation:\n"
             "1. **Key Decisions** — things the team agreed on\n"
             "2. **TODOs / Action Items** — tasks mentioned, with who is responsible if stated\n"
             "3. **Open Questions** — unresolved questions\n"
             "4. **Key Ideas** — important ideas or suggestions discussed",
             history,
-            system_override="You are LumaBot, a project note-taking assistant. Be thorough but concise. Use markdown formatting.",
+            system_override="You are MiraBot, a project note-taking assistant. Be thorough but concise. Use markdown formatting.",
         )
     except Exception as e:
         answer = f"Sorry, something went wrong: {e}"
@@ -328,7 +330,7 @@ async def export_command(interaction: discord.Interaction, count: int = 200):
     await interaction.followup.send(answer)
 
 
-# ===== Respond to @mentions, replies, and "lumabot" keyword =====
+# ===== Respond to @mentions, replies, and "mirabot" keyword =====
 @bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
@@ -336,7 +338,7 @@ async def on_message(message: discord.Message):
 
     should_reply = False
 
-    # 1. @LumaBot — someone mentioned the bot
+    # 1. @MiraBot — someone mentioned the bot
     if bot.user in message.mentions:
         should_reply = True
 
@@ -351,17 +353,17 @@ async def on_message(message: discord.Message):
         except Exception:
             pass
 
-    # 3. Keyword "lumabot"
-    if "lumabot" in message.content.lower():
+    # 3. Keyword "mirabot"
+    if "mirabot" in message.content.lower():
         should_reply = True
 
     if should_reply:
         async with message.channel.typing():
             try:
-                msgs = await fetch_channel_history(message.channel)
+                msgs = await fetch_channel_history(message.channel, limit=300)
                 history = format_history_for_ai(msgs)
-                url_ctx = await extract_url_context(message.content + " " + history)
-                answer = ask_ai(message.content, history, url_context=url_ctx)
+                url_ctx = await extract_url_context(message.content)
+                answer = await ask_ai(message.content, history, url_context=url_ctx)
             except Exception as e:
                 answer = f"Sorry, something went wrong: {e}"
             await message.reply(answer)
@@ -389,7 +391,7 @@ async def auto_sync_logs():
 async def on_ready():
     global _sync_task
     await tree.sync(guild=guild_obj)
-    print(f"LumaBot is online as {bot.user} — slash commands synced to guild {DISCORD_GUILD_ID}")
+    print(f"MiraBot is online as {bot.user} — slash commands synced to guild {DISCORD_GUILD_ID}")
     if _sync_task is not None:
         _sync_task.cancel()
     _sync_task = bot.loop.create_task(auto_sync_logs())
