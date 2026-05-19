@@ -1,0 +1,16 @@
+{
+  "name": "miranote-discord-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that exposes the MiraNote Discord server to Claude Code (MengProxy-style)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.5.0",
+    "zod": "^3.23.8"
+  }
+}
