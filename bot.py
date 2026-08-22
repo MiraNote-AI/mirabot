@@ -40,7 +40,8 @@ DISCORD_BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 DISCORD_CLIENT_ID = os.environ["DISCORD_CLIENT_ID"]
 DISCORD_GUILD_ID = os.environ["DISCORD_GUILD_ID"]
 AI_API_KEY = os.environ["AI_API_KEY"]
-AI_API_BASE_URL = os.environ.get("AI_API_BASE_URL", "https://api.openai.com/v1")
+AI_API_BASE_URL = os.environ.get("AI_API_BASE_URL", "https://api.deepseek.com")
+AI_MODEL = os.environ.get("AI_MODEL", "deepseek-v4-flash")
 
 CHAT_LOGS_DIR = Path(__file__).parent / "chat_logs"
 CHAT_LOGS_DIR.mkdir(exist_ok=True)
@@ -225,7 +226,7 @@ async def ask_ai(question: str, chat_history: str = "", system_override: str = "
         )
     resp = await asyncio.to_thread(
         ai.chat.completions.create,
-        model="gemini-flash-latest",
+        model=AI_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": question},
