@@ -5,6 +5,7 @@ Features:
 - /summarize [count] — Summarize recent messages
 - /notes — Extract key decisions and TODOs
 - /export [count] — Export chat history to local file
+- /issue [hint] -- Draft a GitHub issue from the discussion; a teammate confirms it
 - Auto-sync: periodically saves all channel logs to chat_logs/
 - Responds to @mentions, replies to bot messages, and "mirabot" keyword
 - Fetches URL content (including JS-rendered pages like Xiaohongshu)
@@ -21,6 +22,8 @@ import discord
 from discord import app_commands
 from openai import OpenAI
 from dotenv import load_dotenv
+
+from github_issues import ISSUE_WORD, REPOS, DRAFT_SYSTEM, GitHubApp, IssueDraft, issue_body, parse_draft
 
 try:
     from playwright.async_api import async_playwright
@@ -42,6 +45,15 @@ DISCORD_GUILD_ID = os.environ["DISCORD_GUILD_ID"]
 AI_API_KEY = os.environ["AI_API_KEY"]
 AI_API_BASE_URL = os.environ.get("AI_API_BASE_URL", "https://api.deepseek.com")
 AI_MODEL = os.environ.get("AI_MODEL", "deepseek-v4-flash")
+
+# Issues are filed through the MiraBot GitHub App; only these Discord users
+# (comma-separated ids) may confirm one.
+# A PEM pasted into a Fly secret may carry literal "\\n" for its line breaks.
+github = GitHubApp(
+    os.environ["GITHUB_APP_ID"], os.environ["GITHUB_APP_PRIVATE_KEY"].replace("\\n", "\n")
+)
+TEAM_IDS = {int(i) for i in os.environ["TEAM_DISCORD_IDS"].split(",") if i.strip()}
+ISSUE_PREVIEW_MINUTES = 10
 
 CHAT_LOGS_DIR = Path(__file__).parent / "chat_logs"
 CHAT_LOGS_DIR.mkdir(exist_ok=True)
@@ -331,6 +343,120 @@ async def export_command(interaction: discord.Interaction, count: int = 200):
     await interaction.followup.send(answer)
 
 
+# ===== /issue -- draft a GitHub issue, file it once a teammate confirms =====
+async def draft_issue(channel, request: str) -> IssueDraft:
+    msgs = await fetch_channel_history(channel, limit=100)
+    raw = await ask_ai(
+        f"Write the issue for this request: {request}",
+        format_history_for_ai(msgs),
+        system_override=DRAFT_SYSTEM,
+    )
+    return parse_draft(raw)
+
+
+def issue_preview(draft: IssueDraft) -> str:
+    body = draft.body if len(draft.body) <= 1500 else draft.body[:1500] + "\n..."
+    return (
+        f"**Issue draft** for `{draft.repo}`\n**{draft.title}**\n\n{body}\n\n"
+        f"A teammate can press Create within {ISSUE_PREVIEW_MINUTES} minutes."
+    )
+
+
+class IssueView(discord.ui.View):
+    """Create / repo picker / Cancel under a draft preview."""
+
+    def __init__(self, draft: IssueDraft):
+        super().__init__(timeout=ISSUE_PREVIEW_MINUTES * 60)
+        self.draft = draft
+        self.message: discord.Message | discord.PartialMessage | None = None
+        # Set by the first Create until it fails: a second click (or a Cancel)
+        # meanwhile must not file a duplicate or hide a filed issue.
+        self.creating = False
+        picker = discord.ui.Select(
+            placeholder="Change repo",
+            options=[discord.SelectOption(label=r, default=r == draft.repo) for r in REPOS],
+        )
+        picker.callback = self.pick_repo
+        self.add_item(picker)
+        self.picker = picker
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id in TEAM_IDS:
+            return True
+        await interaction.response.send_message("Only the MiraNote team can do this.", ephemeral=True)
+        return False
+
+    async def pick_repo(self, interaction: discord.Interaction):
+        self.draft.repo = self.picker.values[0]
+        for option in self.picker.options:
+            option.default = option.label == self.draft.repo
+        await interaction.response.edit_message(content=issue_preview(self.draft), view=self)
+
+    @discord.ui.button(label="Create", style=discord.ButtonStyle.success)
+    async def create(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.creating:
+            await interaction.response.send_message("Already being created.", ephemeral=True)
+            return
+        self.creating = True
+        # GitHub can take longer than Discord's 3 s to answer an interaction.
+        await interaction.response.defer()
+        body = issue_body(self.draft, interaction.message.jump_url, interaction.user.display_name)
+        try:
+            number, url = await github.create_issue(self.draft.repo, self.draft.title, body)
+        except Exception as e:
+            self.creating = False
+            await interaction.followup.send(f"Could not create the issue: {e}", ephemeral=True)
+            return
+        self.stop()
+        await interaction.edit_original_response(
+            content=f"Created {self.draft.repo}#{number}: **{self.draft.title}**\n{url}", view=None
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.creating:
+            await interaction.response.send_message("Already being created.", ephemeral=True)
+            return
+        self.stop()
+        await interaction.response.edit_message(
+            content=f"~~Issue draft: {self.draft.title}~~ (cancelled)", view=None
+        )
+
+    async def on_timeout(self):
+        if self.message is None:
+            return
+        try:
+            await self.message.edit(content=f"~~Issue draft: {self.draft.title}~~ (expired)", view=None)
+        except discord.HTTPException as e:
+            print(f"Could not expire issue draft {self.message.id}: {e}")
+
+
+@tree.command(name="issue", description="Draft a GitHub issue from this discussion", guild=guild_obj)
+@app_commands.describe(hint="What the issue is about (optional)")
+async def issue_command(interaction: discord.Interaction, hint: str = ""):
+    await interaction.response.defer(thinking=True)
+    try:
+        draft = await draft_issue(interaction.channel, hint or "the topic under discussion")
+    except Exception as e:
+        await interaction.followup.send(f"Sorry, I could not draft the issue: {e}")
+        return
+    view = IssueView(draft)
+    sent = await interaction.followup.send(issue_preview(draft), view=view, wait=True)
+    # The followup's webhook token dies after 15 minutes; the timeout edit
+    # goes through the bot token instead.
+    view.message = interaction.channel.get_partial_message(sent.id)
+
+
+async def reply_with_issue_draft(message: discord.Message):
+    try:
+        draft = await draft_issue(message.channel, message.content)
+    except Exception as e:
+        await message.reply(f"Sorry, I could not draft the issue: {e}")
+        return
+    view = IssueView(draft)
+    view.message = await message.reply(issue_preview(draft), view=view)
+
+
 # ===== Respond to @mentions, replies, and "mirabot" keyword =====
 @bot.event
 async def on_message(message: discord.Message):
@@ -357,6 +483,13 @@ async def on_message(message: discord.Message):
     # 3. Keyword "mirabot"
     if "mirabot" in message.content.lower():
         should_reply = True
+
+    # "@MiraBot ... issue ..." drafts an issue instead of answering. Only an
+    # explicit @ counts, not a reply (which also lists the bot in mentions).
+    if bot.user.mention in message.content.replace("<@!", "<@") and ISSUE_WORD.search(message.content):
+        async with message.channel.typing():
+            await reply_with_issue_draft(message)
+        return
 
     if should_reply:
         async with message.channel.typing():
