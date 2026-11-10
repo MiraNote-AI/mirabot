@@ -21,14 +21,10 @@ API = "https://api.github.com"
 # would ping a GitHub user or team once filed.
 DISCORD_USER_MENTION = re.compile(r"<@!?\d+>")
 DISCORD_ROLE_MENTION = re.compile(r"<@&\d+>")
-AT_HANDLE = re.compile(r"(?<![\w@])@[\w-]+(?:/[\w.-]+)?")
-# Markdown code, where GitHub renders no mention: a fenced block (to the end of
-# the text when unclosed) or an inline span closed by the same backtick run.
-MARKDOWN_CODE = re.compile(
-    r"^ {0,3}(?P<fence>`{3,}|~{3,}).*?(?:^ {0,3}(?P=fence)[`~]*[ \t]*$|\Z)"
-    r"|(?P<ticks>`+)(?!`).*?(?<!`)(?P=ticks)(?!`)",
-    re.MULTILINE | re.DOTALL,
-)
+# The "@" that starts a handle; not one inside an email address.
+HANDLE_AT = re.compile(r"(?<![\w@])@(?=[\w-])")
+# GitHub renders "@" + WORD JOINER + name as plain text, not a mention link.
+WORD_JOINER = "\u2060"
 
 DRAFT_SYSTEM = (
     "You turn a Discord discussion of the MiraNote team into one GitHub issue. "
@@ -80,33 +76,21 @@ def parse_draft(raw: str) -> IssueDraft:
 
 
 def neutralize_mentions(text: str) -> str:
-    """Text that pings no one on Discord or GitHub: outside markdown code,
-    Discord mention syntax becomes a plain word and every @handle (@everyone,
-    @here, a GitHub user or team) goes in a code span. Code is left as it is:
-    nothing pings there, and a second pair of backticks would close the span
-    early and leave the handle live. A stray backtick outside code becomes
-    a quote."""
-
-    def prose(part: str) -> str:
-        # A backtick left here pairs with no other, so it would pair with the
-        # ones added below and leave a handle outside the span.
-        part = part.replace("`", "'")
-        part = DISCORD_USER_MENTION.sub("@user", part)
-        part = DISCORD_ROLE_MENTION.sub("@role", part)
-        return AT_HANDLE.sub(lambda m: f"`{m.group(0)}`", part)
-
-    out, last = [], 0
-    for code in MARKDOWN_CODE.finditer(text):
-        out += [prose(text[last : code.start()]), code.group(0)]
-        last = code.end()
-    out.append(prose(text[last:]))
-    return "".join(out)
+    """Text that pings no one on Discord or GitHub: Discord mention syntax
+    becomes a plain word, and every @handle (@everyone, @here, a GitHub user
+    or team) gets a word joiner after its "@". Code too: telling code from
+    prose means parsing markdown the way GitHub does, and the joiner is
+    harmless either way."""
+    text = DISCORD_USER_MENTION.sub("@user", text)
+    text = DISCORD_ROLE_MENTION.sub("@role", text)
+    return HANDLE_AT.sub("@" + WORD_JOINER, text)
 
 
 def issue_body(draft: IssueDraft, discussion_url: str, confirmed_by: str) -> str:
     """The body filed on GitHub: the draft plus where it came from."""
-    # A code span keeps a display name from adding markdown or a mention.
-    name = confirmed_by.replace("`", "'")
+    # A code span keeps a display name from adding markdown, the joiner from
+    # pinging anyone.
+    name = neutralize_mentions(confirmed_by.replace("`", "'"))
     return (
         f"{draft.body}\n\n---\n"
         f"Filed by MiraBot from the [Discord discussion]({discussion_url}), "

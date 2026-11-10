@@ -55,30 +55,43 @@ class ParseDraftTests(unittest.TestCase):
         raw = json.dumps({"repo": "mirabot", "title": "Ping @here",
                           "body": "cc @everyone <@123> <@!456> <@&789> @jason @MiraNote-AI/core"})
         draft = parse_draft(raw)
-        self.assertEqual(draft.title, "Ping `@here`")
+        self.assertEqual(draft.title, f"Ping @{J}here")
         self.assertEqual(draft.body,
-                         "cc `@everyone` `@user` `@user` `@role` `@jason` `@MiraNote-AI/core`")
+                         f"cc @{J}everyone @{J}user @{J}user @{J}role @{J}jason @{J}MiraNote-AI/core")
+
+
+J = "\u2060"  # word joiner
 
 
 class NeutralizeMentionsTests(unittest.TestCase):
-    def test_leaves_emails_and_code_spans_alone(self):
-        text = "mail a@b.com, run `@decorator`"
+    def test_leaves_emails_alone(self):
+        text = "mail a@b.com or x.y-z@example.org"
         self.assertEqual(neutralize_mentions(text), text)
 
-    def test_handle_inside_an_inline_code_span_stays_inside_it(self):
-        text = "Run `deploy --as @octocat now` here"
-        self.assertEqual(neutralize_mentions(text), text)
+    def test_handle_inside_an_inline_code_span_is_neutralized_in_place(self):
+        self.assertEqual(neutralize_mentions("Run `deploy --as @octocat now` here"),
+                         f"Run `deploy --as @{J}octocat now` here")
 
-    def test_handles_inside_code_are_left_alone(self):
-        text = "``a ` @b`` and\n```sh\ngit log --author @c\n```\n~~~\n@d"
-        self.assertEqual(neutralize_mentions(text), text)
+    def test_handles_inside_code_are_neutralized_too(self):
+        self.assertEqual(neutralize_mentions("``a ` @b`` and\n```sh\ngit log --author @c\n```\n~~~\n@d"),
+                         f"``a ` @{J}b`` and\n```sh\ngit log --author @{J}c\n```\n~~~\n@{J}d")
 
-    def test_handles_around_code_are_wrapped(self):
-        self.assertEqual(neutralize_mentions("@a `x` @b\n```\ny\n```\n@c"),
-                         "`@a` `x` `@b`\n```\ny\n```\n`@c`")
+    def test_backticks_broken_by_a_paragraph(self):
+        # GitHub ends the paragraph at the blank line, so these backticks are
+        # literal and the handle would be live.
+        self.assertEqual(neutralize_mentions("Start `code\n\ncc @octocat please\n\nend` here"),
+                         f"Start `code\n\ncc @{J}octocat please\n\nend` here")
 
-    def test_stray_backtick_cannot_pair_with_the_added_ones(self):
-        self.assertEqual(neutralize_mentions("a ` @g"), "a ' `@g`")
+    def test_escaped_backticks(self):
+        self.assertEqual(neutralize_mentions("Use \\`not code @octocat \\` here"),
+                         f"Use \\`not code @{J}octocat \\` here")
+
+    def test_stray_backtick_is_kept(self):
+        self.assertEqual(neutralize_mentions("a ` @g"), f"a ` @{J}g")
+
+    def test_is_idempotent(self):
+        once = neutralize_mentions("@a @everyone")
+        self.assertEqual(neutralize_mentions(once), once)
 
 
 class IssueBodyTests(unittest.TestCase):
@@ -90,7 +103,7 @@ class IssueBodyTests(unittest.TestCase):
 
     def test_display_name_cannot_add_markdown(self):
         body = issue_body(IssueDraft("mirabot", "T", "B"), "https://discord.com/x", "**`@x`** [y](z)")
-        self.assertIn("confirmed by `**'@x'** [y](z)`.", body)
+        self.assertIn(f"confirmed by `**'@{J}x'** [y](z)`.", body)
 
 
 class LoadIssueConfigTests(unittest.TestCase):
