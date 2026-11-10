@@ -65,6 +65,21 @@ class NeutralizeMentionsTests(unittest.TestCase):
         text = "mail a@b.com, run `@decorator`"
         self.assertEqual(neutralize_mentions(text), text)
 
+    def test_handle_inside_an_inline_code_span_stays_inside_it(self):
+        text = "Run `deploy --as @octocat now` here"
+        self.assertEqual(neutralize_mentions(text), text)
+
+    def test_handles_inside_code_are_left_alone(self):
+        text = "``a ` @b`` and\n```sh\ngit log --author @c\n```\n~~~\n@d"
+        self.assertEqual(neutralize_mentions(text), text)
+
+    def test_handles_around_code_are_wrapped(self):
+        self.assertEqual(neutralize_mentions("@a `x` @b\n```\ny\n```\n@c"),
+                         "`@a` `x` `@b`\n```\ny\n```\n`@c`")
+
+    def test_stray_backtick_cannot_pair_with_the_added_ones(self):
+        self.assertEqual(neutralize_mentions("a ` @g"), "a ' `@g`")
+
 
 class IssueBodyTests(unittest.TestCase):
     def test_links_the_discussion_and_who_confirmed(self):
@@ -113,6 +128,7 @@ class GitHubAppTests(unittest.IsolatedAsyncioTestCase):
         self.calls = []
         self.issue_status = 201
         self.listed = []
+        self.token_status = 200
 
         async def installation(request):
             self.calls.append(("installation", request.headers["Authorization"]))
@@ -120,6 +136,9 @@ class GitHubAppTests(unittest.IsolatedAsyncioTestCase):
 
         async def token(request):
             self.calls.append(("token", request.match_info["id"], await request.json()))
+            if self.token_status != 200:
+                return web.json_response({"message": "There is at least one repository that does not exist "
+                                          "or is not accessible"}, status=self.token_status)
             return web.json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
 
         async def issue(request):
@@ -187,6 +206,12 @@ class GitHubAppTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(aiohttp.ClientResponseError):
             await self.github.create_issue("mirabot", "A", "B")
         self.assertEqual(self.calls[-1][0], "list")
+
+    async def test_repo_outside_the_installation_gives_a_clear_error(self):
+        self.token_status = 422
+        with self.assertRaisesRegex(RuntimeError, "installed on all of them"):
+            await self.github.create_issue("mirabot", "A", "B")
+        self.assertNotIn("issue", [c[0] for c in self.calls])
 
     async def test_a_4xx_is_not_looked_up(self):
         self.issue_status = 422

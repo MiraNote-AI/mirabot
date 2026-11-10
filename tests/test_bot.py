@@ -101,6 +101,21 @@ class IssueViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.view.draft.repo, "mirabot")
         self.assertIn("MiraNote-AI/mirabot", i.response.edit_message.await_args.kwargs["content"])
 
+    async def test_repo_change_that_no_longer_fits_inline_attaches_the_draft(self):
+        # A preview of exactly 2000 characters for .github is inline; the
+        # longer miranote-ios name pushes it into an attachment.
+        base = len(bot.issue_preview(IssueDraft(".github", "T", ""))[0])
+        self.view.draft = IssueDraft(".github", "T", "x" * (bot.DISCORD_MESSAGE_LIMIT - base))
+        self.assertEqual(bot.issue_preview(self.view.draft)[1], [])
+        i = interaction()
+        with mock.patch.object(discord.ui.Select, "values", new_callable=mock.PropertyMock,
+                               return_value=["miranote-ios"]):
+            await self.view.picker.callback(i)
+        kwargs = i.response.edit_message.await_args.kwargs
+        self.assertIn(bot.ISSUE_PREVIEW_FILE, kwargs["content"])
+        [file] = kwargs["attachments"]
+        self.assertEqual(file.fp.read().decode(), f"Title: T\n\n{self.view.draft.body}")
+
     async def test_failed_create_can_be_retried(self):
         self.github.create_issue.side_effect = RuntimeError("boom")
         i = interaction()

@@ -452,8 +452,10 @@ class IssueView(discord.ui.View):
         self.draft.repo = self.picker.values[0]
         for option in self.picker.options:
             option.default = option.label == self.draft.repo
-        # The attachment, if any, does not name the repo and stays as it is.
-        await interaction.response.edit_message(content=issue_preview(self.draft)[0], view=self)
+        # A longer repo name can move the draft from inline to an attachment
+        # (or back), so the attachments are replaced along with the content.
+        content, files = issue_preview(self.draft)
+        await interaction.response.edit_message(content=content, attachments=files, view=self)
 
     @discord.ui.button(label="Create", style=discord.ButtonStyle.success)
     async def create(self, interaction: discord.Interaction, button: discord.ui.Button):
