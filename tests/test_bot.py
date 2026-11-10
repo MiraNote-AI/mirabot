@@ -179,6 +179,7 @@ class IssueRequestTests(unittest.TestCase):
 class OnMessageTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.me = mock.MagicMock(spec=discord.ClientUser)
+        self.me.id = BOT_ID
         self.me.mention = f"<@{BOT_ID}>"
         patches = [
             mock.patch.object(discord.Client, "user", new_callable=mock.PropertyMock,
@@ -193,13 +194,16 @@ class OnMessageTests(unittest.IsolatedAsyncioTestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def message(self, content, author_id=TEAM_ID, author_bot=False):
+    def message(self, content, author_id=TEAM_ID, author_bot=False, reply_to_bot=False):
         m = mock.MagicMock()
         m.content = content
         m.author.id = author_id
         m.author.bot = author_bot
-        m.mentions = [self.me] if self.me.mention in content else []
-        m.reference = None
+        typed = self.me.mention in content.replace("<@!", "<@")
+        m.raw_mentions = [BOT_ID] if typed else []
+        # A reply lists its target in mentions, but not in the typed text.
+        m.mentions = [self.me] if typed or reply_to_bot else []
+        m.reference = mock.MagicMock() if reply_to_bot else None
         m.reply = mock.AsyncMock()
         return m
 
@@ -209,6 +213,16 @@ class OnMessageTests(unittest.IsolatedAsyncioTestCase):
         bot.draft_issue.assert_not_awaited()
         bot.ask_ai.assert_awaited_once()
         m.reply.assert_awaited_once_with("an answer")
+
+    async def test_reply_to_the_bot_or_the_word_mirabot_stays_silent(self):
+        for m in [self.message("thanks, that helped", reply_to_bot=True),
+                  self.message("file an issue about login", reply_to_bot=True),
+                  self.message("mirabot is great"),
+                  self.message("@everyone file an issue")]:
+            await bot.on_message(m)
+            m.reply.assert_not_awaited()
+        bot.ask_ai.assert_not_awaited()
+        bot.draft_issue.assert_not_awaited()
 
     async def test_explicit_request_drafts_an_issue(self):
         m = self.message(f"<@{BOT_ID}> file an issue about login")

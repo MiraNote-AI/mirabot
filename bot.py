@@ -7,7 +7,7 @@ Features:
 - /export [count] — Export chat history to local file
 - /issue [hint] (or "@MiraBot file an issue [hint]") -- Draft a GitHub issue from the discussion; a teammate confirms it
 - Auto-sync: periodically saves all channel logs to chat_logs/
-- Responds to @mentions, replies to bot messages, and "mirabot" keyword
+- Responds only when @mentioned
 - Fetches URL content (including JS-rendered pages like Xiaohongshu)
 """
 
@@ -536,37 +536,23 @@ async def reply_with_issue_draft(message: discord.Message, hint: str):
     view.message = await message.reply(content, view=view, files=files)
 
 
-# ===== Respond to @mentions, replies, and "mirabot" keyword =====
+# ===== Respond only to an explicit @MiraBot =====
 @bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
 
-    hint = issue_request(message.content, bot.user.mention)
+    # Only a typed @MiraBot in the text counts. Replies to the bot, the
+    # word "mirabot", @everyone/@here and role pings stay silent, so the
+    # bot never joins a conversation between teammates.
+    should_reply = bot.user.id in message.raw_mentions
+
+    # "@MiraBot file an issue [hint]" drafts an issue; it needs the same
+    # typed mention, at the start of the message.
+    hint = issue_request(message.content, bot.user.mention) if should_reply else None
     if hint is not None:
         await reply_with_issue_draft(message, hint)
         return
-
-    should_reply = False
-
-    # 1. @MiraBot — someone mentioned the bot
-    if bot.user in message.mentions:
-        should_reply = True
-
-    # 2. Reply to bot's message — fetch the referenced message if not cached
-    if message.reference:
-        try:
-            ref_msg = message.reference.resolved
-            if ref_msg is None:
-                ref_msg = await message.channel.fetch_message(message.reference.message_id)
-            if ref_msg.author == bot.user:
-                should_reply = True
-        except Exception:
-            pass
-
-    # 3. Keyword "mirabot"
-    if "mirabot" in message.content.lower():
-        should_reply = True
 
     if should_reply:
         async with message.channel.typing():
