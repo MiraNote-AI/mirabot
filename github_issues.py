@@ -86,10 +86,17 @@ def parse_draft(raw: str) -> IssueDraft:
 
 def neutralize_mentions(text: str) -> str:
     """Text that pings no one on Discord or GitHub: Discord mention syntax
-    becomes a plain word, and every @handle (@everyone, @here, a GitHub user
-    or team) gets a word joiner after its "@". Code too: telling code from
-    prose means parsing markdown the way GitHub does, and the joiner is
-    harmless either way."""
+    becomes a plain word, "@" entities become "@", and every @handle
+    (@everyone, @here, a GitHub user or team) gets a word joiner after its
+    "@". Email addresses are left as they are.
+
+    Code and links get the joiner too, and there it is not harmless: it
+    travels with anything copied from the issue, so a copied `@MainActor` or
+    `@dataclass` no longer compiles, and a link with "/@name" in its path
+    points at "/@%E2%81%A0name", which not every site resolves. The trade is
+    still right: skipping code or links means parsing markdown the way
+    GitHub does, and every miss pings someone from a public issue, while a
+    broken copy shows itself at once and is easy to fix."""
     text = DISCORD_USER_MENTION.sub("@user", text)
     text = DISCORD_ROLE_MENTION.sub("@role", text)
     text = AT_ENTITY.sub("@", text)
