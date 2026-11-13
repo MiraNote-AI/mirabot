@@ -14,6 +14,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
     playwright install chromium
 
-COPY bot.py .
+COPY bot.py github_issues.py ./
 
 CMD ["python", "-u", "bot.py"]
