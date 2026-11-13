@@ -93,6 +93,42 @@ class NeutralizeMentionsTests(unittest.TestCase):
         once = neutralize_mentions("@a @everyone")
         self.assertEqual(neutralize_mentions(once), once)
 
+    def test_handles_github_still_linked_get_the_joiner(self):
+        # Each of these rendered a live mention on GitHub (POST /markdown)
+        # when the joiner depended on a Unicode \w lookbehind: a Chinese or
+        # accented letter before "@", a second "@", emphasis that ends in "_",
+        # and "@" written as an entity.
+        cases = [
+            ("cc @@octocat please", f"cc @@{J}octocat please"),
+            ("Jos\u00e9@octocat and \u00e9@octocat", f"Jos\u00e9@{J}octocat and \u00e9@{J}octocat"),
+            ("\u8bf7@octocat \u770b\u4e00\u4e0b", f"\u8bf7@{J}octocat \u770b\u4e00\u4e0b"),
+            ("\u8bf7<@123456789012345678>\u770b\u4e00\u4e0b", f"\u8bf7@{J}user\u770b\u4e00\u4e0b"),
+            ("\u5927\u5bb6@everyone\u770b\u4e00\u4e0b", f"\u5927\u5bb6@{J}everyone\u770b\u4e00\u4e0b"),
+            ("_a_@octocat", f"_a_@{J}octocat"),
+            ("__a__@octocat", f"__a__@{J}octocat"),
+            ("cc &#64;octocat", f"cc @{J}octocat"),
+            ("cc &#064;octocat", f"cc @{J}octocat"),
+            ("cc &#x40;octocat", f"cc @{J}octocat"),
+            ("cc &commat;octocat", f"cc @{J}octocat"),
+        ]
+        for text, neutral in cases:
+            with self.subTest(text=text):
+                self.assertEqual(neutralize_mentions(text), neutral)
+
+    def test_leaves_email_links_and_git_remotes_alone(self):
+        for text in ["<jason@example.com> and [mail](mailto:jason@example.com)",
+                     "git clone git@github.com:MiraNote-AI/mirabot.git"]:
+            with self.subTest(text=text):
+                self.assertEqual(neutralize_mentions(text), text)
+
+    def test_a_domain_after_the_name_does_not_protect_a_handle(self):
+        # GitHub links each of these, so only an email's "@" (a letter or
+        # digit before it) is left alone.
+        for text in ["cc @octocat.", "cc @octocat..com", "cc @octocat.http://example.com",
+                     "cc @octocat.ftp://example.com"]:
+            with self.subTest(text=text):
+                self.assertEqual(neutralize_mentions(text), text.replace("@", f"@{J}"))
+
 
 class IssueBodyTests(unittest.TestCase):
     def test_links_the_discussion_and_who_confirmed(self):

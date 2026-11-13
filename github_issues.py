@@ -21,8 +21,17 @@ API = "https://api.github.com"
 # would ping a GitHub user or team once filed.
 DISCORD_USER_MENTION = re.compile(r"<@!?\d+>")
 DISCORD_ROLE_MENTION = re.compile(r"<@&\d+>")
-# The "@" that starts a handle; not one inside an email address.
-HANDLE_AT = re.compile(r"(?<![\w@])@(?=[\w-])")
+# The "@" that starts a handle: every "@" before a name except an email's,
+# which has an ASCII letter or digit before it and a dotted domain after it.
+# Neither side alone is enough: GitHub's boundary is ASCII (a Chinese letter
+# before "@" protects nothing), markdown can end right before the "@"
+# ("_a_@x"), and a domain-like name can still be linked ("@x.ftp://...").
+HANDLE_AT = re.compile(
+    r"(?<![A-Za-z0-9])@(?=[A-Za-z0-9_-])"
+    r"|@(?=[A-Za-z0-9_-])(?![A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)"
+)
+# "@" written as an entity: GitHub decodes it and then links the handle.
+AT_ENTITY = re.compile(r"&(?:#0*64|#[xX]0*40|commat);")
 # GitHub renders "@" + WORD JOINER + name as plain text, not a mention link.
 WORD_JOINER = "\u2060"
 
@@ -83,6 +92,7 @@ def neutralize_mentions(text: str) -> str:
     harmless either way."""
     text = DISCORD_USER_MENTION.sub("@user", text)
     text = DISCORD_ROLE_MENTION.sub("@role", text)
+    text = AT_ENTITY.sub("@", text)
     return HANDLE_AT.sub("@" + WORD_JOINER, text)
 
 
