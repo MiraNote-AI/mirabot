@@ -176,12 +176,13 @@ class ClosedPreviewTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AllowedMentionsTests(unittest.TestCase):
-    def test_bot_pings_no_one(self):
+    def test_bot_pings_only_the_person_it_replies_to(self):
         mentions = bot.bot.allowed_mentions
         self.assertFalse(mentions.everyone)
         self.assertFalse(mentions.users)
         self.assertFalse(mentions.roles)
-        self.assertFalse(mentions.replied_user)
+        self.assertTrue(mentions.replied_user)
+        self.assertEqual(mentions.to_dict(), {"parse": [], "replied_user": True})
 
 
 class AskAiTests(unittest.IsolatedAsyncioTestCase):

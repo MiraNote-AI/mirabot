@@ -279,7 +279,15 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 # Nothing MiraBot posts (model output included) may ping @everyone, a role or a user.
-bot = discord.Client(intents=intents, allowed_mentions=discord.AllowedMentions.none())
+# Model text never pings: no @everyone/@here, users or roles. The one
+# notification kept is the reply itself, to the person who asked MiraBot,
+# as on dev before this PR.
+bot = discord.Client(
+    intents=intents,
+    allowed_mentions=discord.AllowedMentions(
+        everyone=False, users=False, roles=False, replied_user=True
+    ),
+)
 tree = app_commands.CommandTree(bot)
 
 guild_obj = discord.Object(id=int(DISCORD_GUILD_ID))
