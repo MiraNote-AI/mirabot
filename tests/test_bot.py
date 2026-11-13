@@ -1,3 +1,4 @@
+import asyncio
 import os
 import subprocess
 import sys
@@ -127,6 +128,51 @@ class IssueViewTests(unittest.IsolatedAsyncioTestCase):
         i = interaction(user_id=OUTSIDER_ID)
         self.assertFalse(await self.view.interaction_check(i))
         self.assertTrue(await self.view.interaction_check(interaction()))
+
+
+class ClosedPreviewTests(unittest.IsolatedAsyncioTestCase):
+    """Cancel or the timeout files nothing (#13): a Create click that reaches
+    a closed preview is dropped. Clicks go through discord.py's view store,
+    as they do in the running bot."""
+
+    MESSAGE_ID = 500
+
+    async def asyncSetUp(self):
+        self.github = mock.AsyncMock()
+        self.github.create_issue.return_value = (7, "https://github.com/i/7")
+        self.store = discord.ui.view.ViewStore(bot.bot._connection)
+
+    def preview(self):
+        view = bot.IssueView(draft(), bot.IssueConfig(self.github, {TEAM_ID}))
+        view.message = mock.MagicMock()
+        view.message.edit = mock.AsyncMock()
+        self.store.add_view(view, self.MESSAGE_ID)
+        return view
+
+    async def click(self, button):
+        i = interaction()
+        i.message.id = self.MESSAGE_ID
+        self.store.dispatch_view(discord.ComponentType.button.value, button.custom_id, i)
+        await asyncio.sleep(0.05)  # let a dispatched callback run
+
+    async def test_create_on_an_open_preview_files_the_issue(self):
+        view = self.preview()
+        await self.click(view.create)
+        self.github.create_issue.assert_awaited_once()
+
+    async def test_cancel_files_nothing(self):
+        view = self.preview()
+        await self.click(view.cancel)
+        await self.click(view.create)
+        self.github.create_issue.assert_not_awaited()
+
+    async def test_timeout_files_nothing(self):
+        with mock.patch.object(bot, "ISSUE_PREVIEW_MINUTES", 0.001):  # 60 ms
+            view = self.preview()
+        await asyncio.sleep(0.2)
+        await self.click(view.create)
+        self.github.create_issue.assert_not_awaited()
+        self.assertIn("(expired)", view.message.edit.await_args.kwargs["content"])
 
 
 class AllowedMentionsTests(unittest.TestCase):
