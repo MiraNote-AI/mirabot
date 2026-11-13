@@ -1,3 +1,5 @@
+# The Fly app keeps its pre-rename name: Fly apps cannot be renamed
+# in place, so do not change this to mirabot-discord (see #18).
 app = "lumabot-discord"
 primary_region = "sjc"
 
